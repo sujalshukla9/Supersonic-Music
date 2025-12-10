@@ -1,9 +1,15 @@
 const express = require("express");
 const cors = require("cors");
-const youtubedl = require("youtube-dl-exec");
+const youtubedlRaw = require("youtube-dl-exec");
 const https = require("https");
 const http = require("http");
 const fetch = require("node-fetch"); // npm i node-fetch@2
+
+// Configure yt-dlp binary path for production (Render deployment)
+// In production, we use system-installed yt-dlp via pip
+const youtubedl = process.env.NODE_ENV === 'production'
+    ? youtubedlRaw.create('/opt/render/.local/bin/yt-dlp')
+    : youtubedlRaw;
 
 const app = express();
 app.use(cors());

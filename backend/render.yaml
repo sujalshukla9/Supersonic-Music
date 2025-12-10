@@ -1,0 +1,27 @@
+# Render Blueprint for Supersonic Music Backend
+# This file enables one-click deployment with Render's "Deploy to Render" button
+# 
+# To deploy:
+# 1. Push this file to your repository
+# 2. Go to Render Dashboard → New → Blueprint
+# 3. Connect your repo and select this render.yaml
+# 
+# Or use the "Deploy to Render" button in README
+
+services:
+  - type: web
+    name: supersonic-backend
+    runtime: node
+    region: oregon # or singapore, frankfurt, ohio
+    plan: free # Options: free, starter, standard, pro
+    rootDir: backend
+    buildCommand: YOUTUBE_DL_SKIP_DOWNLOAD=true npm install && pip install yt-dlp
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: YOUTUBE_DL_SKIP_DOWNLOAD
+        value: "true"
+      - key: YT_KEY
+        sync: false # User must set this manually in dashboard (optional)
