@@ -1,15 +1,9 @@
 const express = require("express");
 const cors = require("cors");
-const youtubedlRaw = require("youtube-dl-exec");
+const play = require("play-dl");
 const https = require("https");
 const http = require("http");
 const fetch = require("node-fetch"); // npm i node-fetch@2
-
-// Configure yt-dlp binary path for production (Render deployment)
-// In production, we use system-installed yt-dlp via pip
-const youtubedl = process.env.NODE_ENV === 'production'
-    ? youtubedlRaw.create('/opt/render/.local/bin/yt-dlp')
-    : youtubedlRaw;
 
 const app = express();
 app.use(cors());
@@ -45,7 +39,7 @@ async function getVideoDetails(videoIds) {
 // Cache for audio URLs (they expire after some time)
 const audioCache = new Map();
 
-// Route: Get Audio Stream URL
+// Route: Get Audio Stream URL using play-dl (pure JavaScript, no binary needed)
 app.get("/audio", async (req, res) => {
     try {
         const videoId = req.query.id;
@@ -57,44 +51,51 @@ app.get("/audio", async (req, res) => {
 
         console.log(`Fetching audio info for: ${videoId}`);
 
-        // Use yt-dlp to get audio URL
-        const result = await youtubedl(url, {
-            dumpSingleJson: true,
-            noCheckCertificates: true,
-            noWarnings: true,
-            preferFreeFormats: true,
-            format: 'bestaudio[ext=m4a]/bestaudio/best',
-            extractAudio: true,
+        // Check cache first
+        const cached = audioCache.get(videoId);
+        if (cached && cached.expiry > Date.now()) {
+            console.log(`Using cached audio URL for: ${videoId}`);
+            return res.json(cached.data);
+        }
+
+        // Get video info using play-dl
+        const info = await play.video_info(url);
+
+        if (!info) {
+            return res.status(404).json({ error: "Video not found" });
+        }
+
+        // Get the audio stream URL
+        const audioFormats = info.format.filter(f =>
+            f.mimeType && f.mimeType.includes('audio')
+        );
+
+        // Sort by bitrate to get best quality
+        audioFormats.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+
+        const bestAudio = audioFormats[0];
+
+        if (!bestAudio || !bestAudio.url) {
+            return res.status(404).json({ error: "No audio stream found" });
+        }
+
+        const responseData = {
+            audioUrl: bestAudio.url,
+            title: info.video_details.title,
+            artist: info.video_details.channel?.name || "Unknown Artist",
+            thumbnail: info.video_details.thumbnails?.[info.video_details.thumbnails.length - 1]?.url || "",
+            duration: info.video_details.durationInSec,
+            videoId: videoId
+        };
+
+        // Cache for 5 minutes (audio URLs expire)
+        audioCache.set(videoId, {
+            data: responseData,
+            expiry: Date.now() + 5 * 60 * 1000
         });
 
-        if (!result || !result.url) {
-            // Try to get from formats
-            const audioFormat = result.formats?.find(f =>
-                f.acodec !== 'none' && f.vcodec === 'none'
-            ) || result.formats?.find(f => f.acodec !== 'none');
+        res.json(responseData);
 
-            if (!audioFormat) {
-                return res.status(404).json({ error: "No audio stream found" });
-            }
-
-            res.json({
-                audioUrl: audioFormat.url,
-                title: result.title,
-                artist: result.uploader || result.channel || "Unknown Artist",
-                thumbnail: result.thumbnail,
-                duration: result.duration,
-                videoId: videoId
-            });
-        } else {
-            res.json({
-                audioUrl: result.url,
-                title: result.title,
-                artist: result.uploader || result.channel || "Unknown Artist",
-                thumbnail: result.thumbnail,
-                duration: result.duration,
-                videoId: videoId
-            });
-        }
     } catch (err) {
         console.error("Error fetching audio:", err.message);
         res.status(500).json({ error: err.message });
@@ -109,32 +110,31 @@ app.get("/stream/:id", async (req, res) => {
 
         console.log(`Streaming video: ${videoId}`);
 
-        // Get audio URL using yt-dlp
-        const result = await youtubedl(url, {
-            dumpSingleJson: true,
-            noCheckCertificates: true,
-            noWarnings: true,
-            format: 'bestaudio[ext=m4a]/bestaudio/best',
-        });
+        // Get video info using play-dl
+        const info = await play.video_info(url);
 
-        // Find the best audio format
-        let audioUrl = result.url;
-        if (!audioUrl && result.formats) {
-            const audioFormat = result.formats.find(f =>
-                f.acodec !== 'none' && f.vcodec === 'none'
-            ) || result.formats.find(f => f.acodec !== 'none');
-
-            if (audioFormat) {
-                audioUrl = audioFormat.url;
-            }
+        if (!info) {
+            return res.status(404).json({ error: "Video not found" });
         }
 
-        if (!audioUrl) {
+        // Get the audio stream URL
+        const audioFormats = info.format.filter(f =>
+            f.mimeType && f.mimeType.includes('audio')
+        );
+
+        // Sort by bitrate to get best quality
+        audioFormats.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+
+        const bestAudio = audioFormats[0];
+
+        if (!bestAudio || !bestAudio.url) {
             return res.status(404).json({ error: "Could not get audio stream" });
         }
 
+        const audioUrl = bestAudio.url;
+
         // Set headers
-        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Content-Type', bestAudio.mimeType || 'audio/webm');
         res.setHeader('Accept-Ranges', 'bytes');
         res.setHeader('Cache-Control', 'no-cache');
 

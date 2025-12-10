@@ -17,7 +17,6 @@
     "cors": "^2.8.5",
     "express": "^5.2.1",
     "node-fetch": "^2.7.0",
-    "play-dl": "^1.9.7",
-    "youtube-dl-exec": "^3.0.27"
+    "play-dl": "^1.9.7"
   }
 }
